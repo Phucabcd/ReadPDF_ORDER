@@ -1,0 +1,31 @@
+name: Build Windows exe
+
+on:
+  workflow_dispatch:        # cho phép bấm nút chạy thủ công trong tab Actions
+  push:
+    branches: [main]        # tự build mỗi khi bạn cập nhật code
+
+jobs:
+  build:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Cài thư viện
+        run: pip install pdfplumber pandas openpyxl pyinstaller
+
+      - name: Build exe
+        run: >
+          pyinstaller --onefile --noconsole --name QuanLyDonHang
+          --collect-all pdfminer --collect-all pdfplumber --collect-all pypdfium2
+          quan_ly_don.py
+
+      - name: Lưu file exe để tải về
+        uses: actions/upload-artifact@v4
+        with:
+          name: QuanLyDonHang-windows
+          path: dist/QuanLyDonHang.exe
