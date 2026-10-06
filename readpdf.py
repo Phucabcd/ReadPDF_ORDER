@@ -22,15 +22,15 @@ else:
 MASTER = BASE / "QuanLyDonHang.xlsx"
 
 # Tên cột dùng trong code (không dấu, đừng đổi)
-COLS = ["stt", "ma_don", "ma_van_don", "thoi_gian_dat", "ma_sp", "so_luong",
+COLS = ["stt", "nen_tang", "ma_don", "ma_van_don", "ma_sp", "so_luong",
         "ngay_nhan", "thang", "file_pdf"]
 
 # Tên hiển thị trong Excel (có dấu, sửa vế phải tùy ý)
 HEADERS = {
     "stt": "STT",
+    "nen_tang": "Nền tảng",
     "ma_don": "Mã đơn",
     "ma_van_don": "Mã vận đơn",
-    "thoi_gian_dat": "Thời gian đặt",
     "ma_sp": "Mã SP",
     "so_luong": "Số lượng",
     "ngay_nhan": "Ngày nhận",
@@ -40,32 +40,85 @@ HEADERS = {
 
 RE_ORDER = re.compile(r"Order ID:\s*(\d{15,20})")
 RE_TRACK = re.compile(r"\b(86\d{10})\b")
-RE_TIME = re.compile(r"Thời gian đặt hàng:\s*(\d{4}-\d{2}-\d{2} \d{2}:\d{2})")
 RE_SKU = re.compile(r"(SP\d{4,5})\s+(\d+)")
 RE_QTY = re.compile(r"Qty Total:\s*(\d+)")
+
+# Phiếu Shopee Express (SPX)
+RE_SPX_ORDER = re.compile(r"Mã\s*đơn\s*hàng:\s*([A-Z0-9]{8,20})")
+RE_SPX_TRACK = re.compile(r"Mã\s*vận\s*đơn:\s*(SPX[A-Z0-9]+)")
+RE_SPX_QTY = re.compile(r"Tổng\s*SL\s*sản\s*phẩm:\s*(\d+)")
 
 
 # ---------------------------------------------------------------
 # Xử lý dữ liệu
 # ---------------------------------------------------------------
+def lay_sp_shopee(page, t):
+    """Lấy mã SP và tổng số lượng từ bảng THÔNG TIN ĐƠN HÀNG của phiếu Shopee."""
+    skus, qty = [], 0
+    try:
+        for tb in page.extract_tables():
+            for row in tb:
+                if not row or len(row) < 6:
+                    continue
+                stt = (row[0] or "").strip()
+                sku = "".join((row[1] or "").split())   # ghép "SP00\n010" -> "SP00010"
+                if stt.isdigit() and sku.startswith("SP"):
+                    skus.append(sku)
+                    sl = (row[5] or "").strip()
+                    qty += int(sl) if sl.isdigit() else 0
+    except Exception:
+        pass
+    if not qty:
+        m = RE_SPX_QTY.search(t)
+        qty = int(m.group(1)) if m else 0
+    return ", ".join(skus), qty
+
+
 def doc_pdf(path):
-    """Mỗi trang = 1 đơn. Trả về danh sách dict."""
+    """Mỗi trang = 1 phiếu. Nhận diện TikTok Shop hoặc Shopee. Trả về danh sách dict."""
     rows = []
     with pdfplumber.open(path) as pdf:
         for p in pdf.pages:
             t = p.extract_text() or ""
-            m = RE_ORDER.search(t) or re.search(r"\b(\d{18})\b", t)
-            if not m:
+
+            # --- TikTok Shop (J&T) ---
+            m = RE_ORDER.search(t)
+            if m:
+                tr = RE_TRACK.search(t)
+                sk, q = RE_SKU.search(t), RE_QTY.search(t)
+                rows.append({
+                    "nen_tang": "TikTok Shop",
+                    "ma_don": m.group(1),
+                    "ma_van_don": tr.group(1) if tr else "",
+                    "ma_sp": sk.group(1) if sk else "",
+                    "so_luong": int(q.group(1)) if q else 0,
+                })
                 continue
-            tr, tm = RE_TRACK.search(t), RE_TIME.search(t)
-            sk, q = RE_SKU.search(t), RE_QTY.search(t)
-            rows.append({
-                "ma_don": m.group(1),
-                "ma_van_don": tr.group(1) if tr else "",
-                "thoi_gian_dat": tm.group(1) if tm else "",
-                "ma_sp": sk.group(1) if sk else "",
-                "so_luong": int(q.group(1)) if q else 0,
-            })
+
+            # --- Shopee (SPX) ---
+            m = RE_SPX_ORDER.search(t)
+            if m:
+                tr = RE_SPX_TRACK.search(t)
+                ma_sp, sl = lay_sp_shopee(p, t)
+                rows.append({
+                    "nen_tang": "Shopee",
+                    "ma_don": m.group(1),
+                    "ma_van_don": tr.group(1) if tr else "",
+                    "ma_sp": ma_sp,
+                    "so_luong": sl,
+                })
+                continue
+
+            # --- Dự phòng: dãy 18 chữ số ---
+            m = re.search(r"\b(\d{18})\b", t)
+            if m:
+                rows.append({
+                    "nen_tang": "Khác",
+                    "ma_don": m.group(1),
+                    "ma_van_don": "",
+                    "ma_sp": "",
+                    "so_luong": 0,
+                })
     return rows
 
 
