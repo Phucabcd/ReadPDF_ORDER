@@ -22,7 +22,7 @@ jobs:
         run: >
           pyinstaller --onefile --noconsole --name QuanLyDonHang
           --collect-all pdfminer --collect-all pdfplumber --collect-all pypdfium2
-          quan_ly_don.py
+          readpdf.py
 
       - name: Lưu file exe để tải về
         uses: actions/upload-artifact@v4
